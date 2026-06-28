@@ -1,8 +1,8 @@
 // app.js — FMDN Finder UI controller. Pure client-side; no network requests.
 import {
   fmdnFromServiceData, distanceMeters, formatDistance, shortUuid, parseDultReply,
-  classify, rssiToPercent, FEAA_UUID, DULT_SERVICE, DULT_CONTROL, INSPECT_SERVICES,
-  DULT_READS, DULT_SOUND_START, DULT_SOUND_STOP,
+  classify, rssiToPercent, selectTarget, capSeenLog, DULT_SERVICE, DULT_CONTROL,
+  INSPECT_SERVICES, DULT_READS, DULT_SOUND_START, DULT_SOUND_STOP,
 } from './fmdn.js';
 
 const REPO_URL = 'https://github.com/grappeq/fmdn-finder';
@@ -22,16 +22,8 @@ const saveNames = () => store.save('fmdnNames', names);
 const saveSeen = () => store.save('fmdnSeen', seenLog);
 const saveSettings = () => store.save('fmdnSettings', settings);
 const MAX_UNNAMED_SEEN = 12; // rotating addresses pile up; keep history bounded
-function pruneSeen() {
-  const cut = Date.now() - 7 * 864e5;
-  const entries = Object.entries(seenLog).sort((a, b) => b[1].ts - a[1].ts);
-  const kept = []; let unnamed = 0;
-  for (const [id, v] of entries) {
-    if (names[id]) kept.push([id, v]);                         // always keep named tags
-    else if (v.ts >= cut && unnamed < MAX_UNNAMED_SEEN) { kept.push([id, v]); unnamed++; }
-  }
-  seenLog = Object.fromEntries(kept);
-}
+function pruneSeen() { seenLog = capSeenLog(seenLog, names, MAX_UNNAMED_SEEN); }
+const persistSeen = () => { pruneSeen(); saveSeen(); };
 
 /* ---------- state ---------- */
 let scan = null, mode = 'normal', lockedId = null, audioCtx = null;
@@ -45,6 +37,8 @@ function showErr(t) { $('err').textContent = t || ''; }
 function relTime(ts) { const s = (Date.now() - ts) / 1000;
   if (s < 60) return Math.round(s) + 's ago'; if (s < 3600) return Math.round(s / 60) + 'm ago';
   if (s < 86400) return Math.round(s / 3600) + 'h ago'; return Math.round(s / 86400) + 'd ago'; }
+const MODAL_IDS = ['inputModal', 'confirmModal', 'inspectModal', 'settingsModal', 'aboutModal'];
+const anyModalOpen = () => MODAL_IDS.some((id) => !$(id).hidden);
 
 /* ---------- modals (non-blocking; never suspend the scan) ---------- */
 function openInput(title, val, onSave) {
@@ -79,13 +73,7 @@ function note(id, rssi, state, name, device) {
 function prune() { const now = performance.now(); for (const [id, t] of tags) if (now - t.last > 8000) tags.delete(id); }
 function pickTarget() {
   prune();
-  if (mode === 'manual') return tags.get(lockedId) || null;
-  let best = null;
-  for (const t of tags.values()) {
-    if (mode === 'normal' && t.state !== 'normal') continue;
-    if (!best || t.ema > best.ema) best = t;
-  }
-  return best;
+  return selectTarget(tags, mode, lockedId);
 }
 function onAdv(ev) {
   advCount++;
@@ -98,14 +86,19 @@ function onAdv(ev) {
 function updateDbg() {
   $('dbg').textContent = `debug — adverts:${advCount} · serviceData:${sdCount} · FEAA:${feaaCount} · last:[${lastSvc || '—'}]`;
 }
+function ensureAudio() {
+  if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch { /* no audio */ } }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+}
 async function startScan() {
   showErr('');
+  if (scan) return;                                  // already scanning — ignore re-clicks
   if (!navigator.bluetooth || !navigator.bluetooth.requestLEScan) {
     showErr('Live scanning isn’t available — see the banner / About for how to enable it.');
     openAbout(); return;
   }
   try {
-    if ($('beep').checked && !audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if ($('beep').checked) ensureAudio();
     navigator.vibrate && navigator.vibrate(10);
     advCount = sdCount = feaaCount = 0; lastSvc = '';
     scan = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true, keepRepeatedDevices: true });
@@ -117,7 +110,7 @@ async function startScan() {
 function stopScan() {
   try { scan && scan.stop(); } catch { /* ignore */ }
   navigator.bluetooth && navigator.bluetooth.removeEventListener('advertisementreceived', onAdv);
-  scan = null; setStatus('idle'); saveSeen();
+  scan = null; setStatus('idle'); persistSeen();
 }
 
 /* ---------- feedback ---------- */
@@ -153,13 +146,13 @@ function makeRow(t, recent) {
   if (recent) { const ago = document.createElement('span'); ago.className = 'small'; ago.textContent = relTime(t.ts); rt.append(ago); }
   const dbm = document.createElement('b'); dbm.textContent = (recent ? t.rssi : Math.round(t.ema)) + ' dBm';
   const ren = document.createElement('button'); ren.className = 'iconbtn'; ren.textContent = '✎';
+  ren.setAttribute('aria-label', 'Rename tag'); ren.title = 'Rename';
   ren.addEventListener('click', (e) => { e.stopPropagation(); rename(t.id); });
   rt.append(dbm, ren);
   div.append(left, rt);
   return div;
 }
-function renderList() {
-  const targetId = (pickTarget() || {}).id;
+function renderList(targetId = (pickTarget() || {}).id) {
   const live = [...tags.values()].sort((a, b) => b.ema - a.ema);
   $('liveCount').textContent = live.length ? `(${live.length})` : '';
   const L = $('list'); L.replaceChildren();
@@ -183,8 +176,7 @@ function renderList() {
 }
 function syncSeg() { [...$('modeSeg').children].forEach((b) => b.classList.toggle('on', b.dataset.mode === mode)); }
 
-function loop() {
-  const t = pickTarget();
+function updateGauge(t) {
   if (t) {
     $('tname').textContent = nameFor(t.id) || ('id ' + t.id.slice(0, 8));
     $('dist').textContent = formatDistance(distanceMeters(t.ema, settings.ref, settings.ple));
@@ -192,14 +184,21 @@ function loop() {
     const fill = $('fill'); fill.style.width = rssiToPercent(t.ema) + '%'; fill.style.background = fillColor(t.ema);
     $('trend').textContent = trendArrow(t);
     $('targetMeta').textContent = `${t.state} · raw ${t.rssi} dBm · id ${t.id.slice(0, 8)}`;
-    feedback(t);
+    if (!anyModalOpen()) feedback(t);                 // no buzzing while a sheet is open
   } else {
     $('rssi').textContent = '--'; $('fill').style.width = '0'; $('trend').textContent = ''; $('dist').textContent = '';
     $('tname').textContent = (mode === 'manual' && lockedId) ? (nameFor(lockedId) || 'locked') : '—';
     $('targetMeta').textContent = (mode === 'manual' && lockedId) ? 'locked — waiting for it to come in range' : 'no target in range';
   }
-  renderList();
-  if (++saveTick % 40 === 0) { pruneSeen(); saveSeen(); }
+}
+
+let frame = 0;
+function loop() {
+  const t = pickTarget();
+  updateGauge(t);                                    // gauge stays smooth (~8/s)
+  if (frame % 4 === 0) renderList(t ? t.id : null);  // lists rebuild less often (~2/s)
+  if (++saveTick % 40 === 0) persistSeen();
+  frame++;
   requestAnimationFrame(() => setTimeout(loop, 120));
 }
 
@@ -320,6 +319,8 @@ async function obtainConnection(target) {
 async function runInspect() {
   showErr('');
   if (!navigator.bluetooth || !navigator.bluetooth.requestDevice) { ib('Web Bluetooth not available on this browser.'); return; }
+  try { if (inspectServer && inspectServer.connected) inspectServer.disconnect(); } catch { /* ignore */ }
+  inspectServer = dultCtrl = null;
   wasScanning = !!scan; if (scan) stopScan();
   ib('Connecting…');
   let res;
@@ -330,7 +331,7 @@ async function runInspect() {
   }
   inspectServer = res.server;
   try { await readAndRender(res); }
-  catch (e) { ibAdd('<br><span style="color:#ff9b8a">read failed: ' + esc(e.message) + '</span>'); }
+  catch (e) { ibAdd('<br><span class="fail">read failed: ' + esc(e.message) + '</span>'); }
 }
 async function readAndRender(res) {
   const { dev, services, how } = res;
@@ -395,7 +396,18 @@ $('modeSeg').addEventListener('click', (e) => { const b = e.target.closest('butt
   mode = b.dataset.mode; if (mode !== 'manual') lockedId = null; syncSeg(); });
 $('bannerHelp').addEventListener('click', openAbout);
 $('bannerDismiss').addEventListener('click', () => { $('banner').hidden = true; });
-window.addEventListener('beforeunload', saveSeen);
+$('beep').addEventListener('change', (e) => { if (e.target.checked) ensureAudio(); });
+window.addEventListener('beforeunload', persistSeen);
+document.addEventListener('keydown', (e) => {                 // Escape closes the top-most modal
+  if (e.key !== 'Escape') return;
+  for (const id of ['inputModal', 'confirmModal']) {          // these stack above the rest
+    if (!$(id).hidden) { $(id).hidden = true; return; }
+  }
+  if (!$('inspectModal').hidden) { $('inspectClose').click(); return; }
+  for (const id of ['settingsModal', 'aboutModal']) {
+    if (!$(id).hidden) { $(id).hidden = true; return; }
+  }
+});
 
 function detectSupport() {
   const b = $('banner'), bt = $('bannerText');
@@ -411,6 +423,8 @@ function detectSupport() {
 detectSupport();
 pruneSeen();
 loop();
-if ('serviceWorker' in navigator) {
+// Register the offline worker only in production (HTTPS). On http staging
+// (sandbox / localhost) skip it so edits are always served fresh.
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }

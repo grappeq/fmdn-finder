@@ -1,5 +1,5 @@
-// sw.js — minimal offline cache for the app shell. Bump CACHE on every release.
-const CACHE = 'fmdn-finder-v4';
+// sw.js — offline cache for the app shell (stale-while-revalidate).
+const CACHE = 'fmdn-finder-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -23,15 +23,19 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Cache-first for same-origin GETs, with a network fallback that refreshes the cache.
+// Stale-while-revalidate for same-origin GETs: serve cache immediately, refresh
+// in the background, so a new deploy lands on the next reload without a version
+// bump. Falls back to the network, then to the cached shell when offline.
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
-  e.respondWith(
-    caches.match(req).then((hit) => hit || fetch(req).then((res) => {
-      const copy = res.clone();
-      caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    const cached = await cache.match(req);
+    const network = fetch(req).then((res) => {
+      if (res && res.ok) cache.put(req, res.clone()).catch(() => {});
       return res;
-    }).catch(() => caches.match('./index.html')))
-  );
+    }).catch(() => null);
+    return cached || (await network) || cache.match('./index.html');
+  })());
 });
