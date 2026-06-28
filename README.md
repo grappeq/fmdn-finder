@@ -13,9 +13,9 @@ tracking — every advertisement is decoded on your device and nothing ever leav
 > 🔗 **Live app:** https://grappeq.github.io/fmdn-finder/
 > _(Best on Chrome for Android. See [Requirements](#requirements).)_
 
-<!-- Add a screenshot at docs/screenshot.png and uncomment:
-![FMDN Finder](docs/screenshot.png)
--->
+<p align="center">
+  <img src="docs/screenshot.png" alt="FMDN Finder hunting a tag: a signal gauge reading -68 dBm, about 2.3 m away, with a list of in-range trackers" width="300">
+</p>
 
 ---
 
