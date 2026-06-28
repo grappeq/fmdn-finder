@@ -74,6 +74,8 @@ main{padding:14px 16px;display:flex;flex-direction:column;gap:14px;max-width:620
 /* modals */
 .modal{position:fixed;inset:0;z-index:20;display:flex;align-items:flex-end;justify-content:center;background:#000a;backdrop-filter:blur(3px);}
 .modal[hidden]{display:none;}
+/* input & confirm can be opened from within another sheet — keep them on top */
+#inputModal,#confirmModal{z-index:30;}
 .sheet{width:100%;max-width:620px;background:var(--card);border:1px solid var(--line);
   border-radius:18px 18px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));max-height:86vh;overflow:auto;}
 .sheet h3{margin:0 0 12px;font-size:17px;}

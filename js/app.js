@@ -21,10 +21,16 @@ let settings = Object.assign({ ref: -59, ple: 2.5 }, store.load('fmdnSettings', 
 const saveNames = () => store.save('fmdnNames', names);
 const saveSeen = () => store.save('fmdnSeen', seenLog);
 const saveSettings = () => store.save('fmdnSettings', settings);
+const MAX_UNNAMED_SEEN = 12; // rotating addresses pile up; keep history bounded
 function pruneSeen() {
   const cut = Date.now() - 7 * 864e5;
-  for (const id of Object.keys(seenLog)) if (seenLog[id].ts < cut) delete seenLog[id];
-  seenLog = Object.fromEntries(Object.entries(seenLog).sort((a, b) => b[1].ts - a[1].ts).slice(0, 60));
+  const entries = Object.entries(seenLog).sort((a, b) => b[1].ts - a[1].ts);
+  const kept = []; let unnamed = 0;
+  for (const [id, v] of entries) {
+    if (names[id]) kept.push([id, v]);                         // always keep named tags
+    else if (v.ts >= cut && unnamed < MAX_UNNAMED_SEEN) { kept.push([id, v]); unnamed++; }
+  }
+  seenLog = Object.fromEntries(kept);
 }
 
 /* ---------- state ---------- */
@@ -165,7 +171,8 @@ function renderList() {
   }
   const liveIds = new Set(tags.keys());
   const rec = Object.entries(seenLog).filter(([id]) => !liveIds.has(id))
-    .map(([id, v]) => ({ id, ...v })).sort((a, b) => b.ts - a.ts).slice(0, 15);
+    .map(([id, v]) => ({ id, ...v }))
+    .sort((a, b) => ((names[b.id] ? 1 : 0) - (names[a.id] ? 1 : 0)) || b.ts - a.ts).slice(0, 12);
   const R = $('recent'); R.replaceChildren();
   if (!rec.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = '— none yet —'; R.append(e); }
   for (const t of rec) {
@@ -192,7 +199,7 @@ function loop() {
     $('targetMeta').textContent = (mode === 'manual' && lockedId) ? 'locked — waiting for it to come in range' : 'no target in range';
   }
   renderList();
-  if (++saveTick % 40 === 0) saveSeen();
+  if (++saveTick % 40 === 0) { pruneSeen(); saveSeen(); }
   requestAnimationFrame(() => setTimeout(loop, 120));
 }
 
@@ -261,11 +268,11 @@ $('inspectBtn').addEventListener('click', () => {
   $('inspectBody').innerHTML = t
     ? `Target: <b>${esc(nameFor(t.id) || ('id ' + t.id.slice(0, 8)))}</b> `
       + `<span class="pill ${t.state}">${t.state}</span><br>`
-      + `<span class="small"><b>Connect</b> reconnects to this tag directly once it’s been granted. `
-      + `First time, tap <b>All devices</b> and pick an <i>“Unknown / unsupported device”</i> — `
-      + `named entries (TVs, speakers) aren’t trackers. A wrong pick is flagged so you can retry.</span>`
-    : `<span class="small">Tap <b>All devices</b> and pick an <i>“Unknown / unsupported device”</i> — `
-      + `named entries (TVs, speakers) aren’t trackers. A wrong pick is flagged so you can retry.</span>`;
+      + `<span class="small"><b>Connect</b> reconnects instantly once this tag has been granted. `
+      + `First time, it opens the system picker — choose an <i>“Unknown / unsupported device”</i> `
+      + `(named entries like TVs/speakers aren’t trackers). A wrong pick is flagged so you can retry.</span>`
+    : `<span class="small"><b>Connect</b> opens the system picker — choose an <i>“Unknown / unsupported device”</i> `
+      + `(named entries like TVs/speakers aren’t trackers). A wrong pick is flagged so you can retry.</span>`;
   $('inspectModal').hidden = false;
 });
 $('inspectClose').addEventListener('click', () => {
@@ -274,12 +281,12 @@ $('inspectClose').addEventListener('click', () => {
   inspectServer = dultCtrl = null;
   if (wasScanning && !scan) { wasScanning = false; startScan(); }
 });
-$('inspectConnect').addEventListener('click', () => runInspect('auto'));
-$('inspectPick').addEventListener('click', () => runInspect('all'));
+$('inspectConnect').addEventListener('click', () => runInspect());
 
 // FMDN tags advertise 0xFEAA as *service data* (AD 0x16), not as a listed
 // service UUID, so requestDevice filters:[{services:[0xfeaa]}] matches nothing.
-// Filter by serviceData when supported; otherwise show all devices (never empty).
+// Filter by serviceData when the browser supports it; otherwise the system
+// picker lists all nearby devices (it can't be narrowed any other way).
 function requestFmdnDevice() {
   return navigator.bluetooth.requestDevice({
     filters: [{ serviceData: [{ service: 0xfeaa }] }], optionalServices: INSPECT_SERVICES,
@@ -291,34 +298,34 @@ function requestFmdnDevice() {
 function requestAllDevices() {
   return navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: INSPECT_SERVICES });
 }
-async function obtainConnection(target, mode) {
-  if (mode !== 'all') {
-    let dev = null;
-    try { if (navigator.bluetooth.getDevices) { const g = await navigator.bluetooth.getDevices();
-      if (target) dev = g.find((d) => d.id === target.id); } } catch { /* ignore */ }
-    if (!dev && target && target.device) dev = target.device;
-    if (dev) {
-      try {
-        const server = await dev.gatt.connect();
-        const services = await server.getPrimaryServices();
-        return { dev, server, services, how: (target && dev === target.device) ? 'locked target' : 'remembered grant' };
-      } catch { /* not granted yet → fall through to the device picker */ }
-    }
+// Smart connect: reuse a remembered grant or the live scan object (no picker);
+// only fall back to the system picker when the tag hasn't been granted yet.
+async function obtainConnection(target) {
+  let dev = null;
+  try { if (navigator.bluetooth.getDevices) { const g = await navigator.bluetooth.getDevices();
+    if (target) dev = g.find((d) => d.id === target.id); } } catch { /* ignore */ }
+  if (!dev && target && target.device) dev = target.device;
+  if (dev) {
+    try {
+      const server = await dev.gatt.connect();
+      const services = await server.getPrimaryServices();
+      return { dev, server, services, how: (target && dev === target.device) ? 'locked target' : 'remembered grant' };
+    } catch { /* not granted yet → fall through to the picker */ }
   }
-  const dev = mode === 'all' ? await requestAllDevices() : await requestFmdnDevice();
-  const server = await dev.gatt.connect();
+  const picked = await requestFmdnDevice();
+  const server = await picked.gatt.connect();
   const services = await server.getPrimaryServices();
-  return { dev, server, services, how: 'picker' };
+  return { dev: picked, server, services, how: 'picker' };
 }
-async function runInspect(mode) {
+async function runInspect() {
   showErr('');
   if (!navigator.bluetooth || !navigator.bluetooth.requestDevice) { ib('Web Bluetooth not available on this browser.'); return; }
   wasScanning = !!scan; if (scan) stopScan();
-  ib(mode === 'all' ? 'Opening device picker…' : 'Connecting to target…');
+  ib('Connecting…');
   let res;
-  try { res = await obtainConnection(lastInspectTarget, mode); }
+  try { res = await obtainConnection(lastInspectTarget); }
   catch (e) {
-    if (e.name === 'NotFoundError') { ib('No device chosen. Tip: tap <b>All devices</b> and pick the tracker — FMDN tags often appear <i>unnamed</i>.'); return; }
+    if (e.name === 'NotFoundError') { ib('No device chosen. Tap <b>Connect</b> and pick an <i>“Unknown / unsupported device”</i> — named entries (TVs, speakers) aren’t trackers.'); return; }
     ib('Could not connect: ' + esc(e.message)); return;
   }
   inspectServer = res.server;

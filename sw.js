@@ -1,5 +1,5 @@
 // sw.js — minimal offline cache for the app shell. Bump CACHE on every release.
-const CACHE = 'fmdn-finder-v3';
+const CACHE = 'fmdn-finder-v4';
 const ASSETS = [
   './',
   './index.html',
