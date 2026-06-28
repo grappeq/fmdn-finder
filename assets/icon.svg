@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="FMDN Finder">
+  <rect width="512" height="512" rx="112" fill="#0b0f17"/>
+  <g fill="none" stroke="#2ecc71" stroke-width="24" stroke-linecap="round">
+    <path d="M196 246a85 85 0 0 1 120 0"/>
+    <path d="M154 204a144 144 0 0 1 204 0"/>
+    <path d="M112 162a204 204 0 0 1 288 0"/>
+  </g>
+  <circle cx="256" cy="312" r="34" fill="#2ecc71"/>
+</svg>
