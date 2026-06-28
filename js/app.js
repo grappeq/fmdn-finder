@@ -261,9 +261,9 @@ $('inspectBtn').addEventListener('click', () => {
   $('inspectBody').innerHTML = t
     ? `Target: <b>${esc(nameFor(t.id) || ('id ' + t.id.slice(0, 8)))}</b> `
       + `<span class="pill ${t.state}">${t.state}</span><br>`
-      + `<span class="small">“Connect” uses this locked tag (no picker once it’s been granted once). `
-      + `“Pick list” opens Chrome’s picker filtered to FMDN tags only.</span>`
-    : `<span class="small">No target locked. “Pick list” opens Chrome’s picker filtered to FMDN tags only.</span>`;
+      + `<span class="small"><b>Connect</b> reconnects to this tag directly once it’s been granted. `
+      + `First time, tap <b>All devices</b> and pick the tracker (FMDN tags usually appear <i>unnamed</i>).</span>`
+    : `<span class="small">Tap <b>All devices</b> and pick the tracker — FMDN tags usually appear <i>unnamed</i> in the list.</span>`;
   $('inspectModal').hidden = false;
 });
 $('inspectClose').addEventListener('click', () => {
@@ -272,11 +272,25 @@ $('inspectClose').addEventListener('click', () => {
   inspectServer = dultCtrl = null;
   if (wasScanning && !scan) { wasScanning = false; startScan(); }
 });
-$('inspectConnect').addEventListener('click', () => runInspect(false));
-$('inspectPick').addEventListener('click', () => runInspect(true));
+$('inspectConnect').addEventListener('click', () => runInspect('auto'));
+$('inspectPick').addEventListener('click', () => runInspect('all'));
 
-async function obtainConnection(target, forceChooser) {
-  if (!forceChooser) {
+// FMDN tags advertise 0xFEAA as *service data* (AD 0x16), not as a listed
+// service UUID, so requestDevice filters:[{services:[0xfeaa]}] matches nothing.
+// Filter by serviceData when supported; otherwise show all devices (never empty).
+function requestFmdnDevice() {
+  return navigator.bluetooth.requestDevice({
+    filters: [{ serviceData: [{ service: 0xfeaa }] }], optionalServices: INSPECT_SERVICES,
+  }).catch((e) => {
+    if (e.name === 'TypeError' || e.name === 'NotSupportedError') return requestAllDevices();
+    throw e; // NotFoundError (user cancelled) or a real error
+  });
+}
+function requestAllDevices() {
+  return navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: INSPECT_SERVICES });
+}
+async function obtainConnection(target, mode) {
+  if (mode !== 'all') {
     let dev = null;
     try { if (navigator.bluetooth.getDevices) { const g = await navigator.bluetooth.getDevices();
       if (target) dev = g.find((d) => d.id === target.id); } } catch { /* ignore */ }
@@ -286,23 +300,25 @@ async function obtainConnection(target, forceChooser) {
         const server = await dev.gatt.connect();
         const services = await server.getPrimaryServices();
         return { dev, server, services, how: (target && dev === target.device) ? 'locked target' : 'remembered grant' };
-      } catch { /* no service grant yet → fall through to filtered picker */ }
+      } catch { /* not granted yet → fall through to the device picker */ }
     }
   }
-  const dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [0xfeaa] }], optionalServices: INSPECT_SERVICES });
+  const dev = mode === 'all' ? await requestAllDevices() : await requestFmdnDevice();
   const server = await dev.gatt.connect();
   const services = await server.getPrimaryServices();
   return { dev, server, services, how: 'picker' };
 }
-async function runInspect(forceChooser) {
+async function runInspect(mode) {
   showErr('');
   if (!navigator.bluetooth || !navigator.bluetooth.requestDevice) { ib('Web Bluetooth not available on this browser.'); return; }
   wasScanning = !!scan; if (scan) stopScan();
-  ib(forceChooser ? 'Opening FMDN picker…' : 'Connecting to target…');
+  ib(mode === 'all' ? 'Opening device picker…' : 'Connecting to target…');
   let res;
-  try { res = await obtainConnection(lastInspectTarget, forceChooser); }
-  catch (e) { ib('Could not connect: ' + esc(e.message)
-    + '<br><span class="small">First time on a tag, tap “Pick list” once to grant it; “Connect” works directly after.</span>'); return; }
+  try { res = await obtainConnection(lastInspectTarget, mode); }
+  catch (e) {
+    if (e.name === 'NotFoundError') { ib('No device chosen. Tip: tap <b>All devices</b> and pick the tracker — FMDN tags often appear <i>unnamed</i>.'); return; }
+    ib('Could not connect: ' + esc(e.message)); return;
+  }
   inspectServer = res.server;
   try { await readAndRender(res); }
   catch (e) { ibAdd('<br><span style="color:#ff9b8a">read failed: ' + esc(e.message) + '</span>'); }
