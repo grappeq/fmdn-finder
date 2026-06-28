@@ -110,3 +110,36 @@ export function classify({ present, mfrBlank, disEncrypted }) {
 export function rssiToPercent(rssi) {
   return Math.max(0, Math.min(100, ((rssi + 100) / 55) * 100)); // -100..-45 → 0..100
 }
+
+/**
+ * Pick the target tag for the current hunt mode (pure).
+ * @param {Map<string,{id,ema,state}>} tags  live tags
+ * @param {'normal'|'any'|'manual'} mode
+ * @param {string} [lockedId] for manual mode
+ */
+export function selectTarget(tags, mode, lockedId) {
+  if (mode === 'manual') return tags.get(lockedId) || null;
+  let best = null;
+  for (const t of tags.values()) {
+    if (mode === 'normal' && t.state !== 'normal') continue;
+    if (!best || t.ema > best.ema) best = t;
+  }
+  return best;
+}
+
+/**
+ * Bound the recently-seen log (pure): keep every named tag, but cap unnamed
+ * entries by recency and age so rotating addresses don't grow it forever.
+ * @returns a new object; does not mutate the input.
+ */
+export function capSeenLog(seenLog, names, maxUnnamed = 12, nowMs = Date.now(), maxAgeMs = 7 * 864e5) {
+  const cut = nowMs - maxAgeMs;
+  const entries = Object.entries(seenLog).sort((a, b) => b[1].ts - a[1].ts);
+  const kept = [];
+  let unnamed = 0;
+  for (const [id, v] of entries) {
+    if (names[id]) kept.push([id, v]);                       // always keep named tags
+    else if (v.ts >= cut && unnamed < maxUnnamed) { kept.push([id, v]); unnamed++; }
+  }
+  return Object.fromEntries(kept);
+}

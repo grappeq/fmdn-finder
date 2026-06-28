@@ -1,0 +1,13 @@
+{
+  "name": "fmdn-finder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Locate and inspect Google Find My Device (FMDN) Bluetooth trackers from your browser.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "homepage": "https://grappeq.github.io/fmdn-finder/",
+  "repository": { "type": "git", "url": "https://github.com/grappeq/fmdn-finder.git" }
+}
