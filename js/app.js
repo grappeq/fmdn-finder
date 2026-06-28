@@ -262,8 +262,10 @@ $('inspectBtn').addEventListener('click', () => {
     ? `Target: <b>${esc(nameFor(t.id) || ('id ' + t.id.slice(0, 8)))}</b> `
       + `<span class="pill ${t.state}">${t.state}</span><br>`
       + `<span class="small"><b>Connect</b> reconnects to this tag directly once it’s been granted. `
-      + `First time, tap <b>All devices</b> and pick the tracker (FMDN tags usually appear <i>unnamed</i>).</span>`
-    : `<span class="small">Tap <b>All devices</b> and pick the tracker — FMDN tags usually appear <i>unnamed</i> in the list.</span>`;
+      + `First time, tap <b>All devices</b> and pick an <i>“Unknown / unsupported device”</i> — `
+      + `named entries (TVs, speakers) aren’t trackers. A wrong pick is flagged so you can retry.</span>`
+    : `<span class="small">Tap <b>All devices</b> and pick an <i>“Unknown / unsupported device”</i> — `
+      + `named entries (TVs, speakers) aren’t trackers. A wrong pick is flagged so you can retry.</span>`;
   $('inspectModal').hidden = false;
 });
 $('inspectClose').addEventListener('click', () => {
@@ -328,6 +330,9 @@ async function readAndRender(res) {
   ib(kv('device', `${dev.name || dev.id.slice(0, 12)} · via ${how}`));
   const present = new Set(services.map((s) => shortUuid(s.uuid)));
   ibAdd(kv('services', [...present].join(', ')));
+  const trackerish = ['feaa', 'feb3', 'fa25', 'fe2c'].some((s) => present.has(s))
+    || services.some((s) => s.uuid.toLowerCase() === DULT_SERVICE);
+  if (!trackerish) ibAdd('<div class="badge unknown">⚠ This isn’t an FMDN tracker — pick a different “Unknown device”.</div>');
   const DISN = { '2a29': 'Manufacturer', '2a24': 'Model', '2a25': 'Serial', '2a26': 'Firmware', '2a27': 'Hardware' };
   let disEncrypted = false, mfrBlank = false;
   const dis = services.find((s) => shortUuid(s.uuid) === '180a');
