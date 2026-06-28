@@ -1,5 +1,8 @@
 # 📡 FMDN Finder
 
+[![tests](https://github.com/grappeq/fmdn-finder/actions/workflows/test.yml/badge.svg)](https://github.com/grappeq/fmdn-finder/actions/workflows/test.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Locate and inspect Google Find My Device (FMDN) Bluetooth trackers — entirely in your browser.**
 
 FMDN Finder turns a phone (or any Chrome device with Bluetooth) into a "hot/cold" signal‑strength
@@ -13,6 +16,20 @@ tracking — every advertisement is decoded on your device and nothing ever leav
 <!-- Add a screenshot at docs/screenshot.png and uncomment:
 ![FMDN Finder](docs/screenshot.png)
 -->
+
+---
+
+## The story behind it
+
+I lost my keys. They had a Bluetooth tracker beacon attached precisely so this would never be a
+problem — except the beacon simply **wasn't showing up in the Google Find My Device app**, for
+reasons I never fully figured out. So instead of staring at an empty map, I went hunting for stray
+beacons around the house: scanning for every Bluetooth tracker advertising nearby, walking around
+following the signal getting stronger, and inspecting the ones I found to tell them apart.
+
+It worked — **I found the keys.** This app is that hunt turned into a tool: scan for FMDN trackers,
+follow the "hotter/colder" signal to walk one down, and connect to it to confirm which tag it is.
+If your own tracker ever goes dark in the official app, you can still find it yourself.
 
 ---
 
@@ -105,14 +122,29 @@ flag for the hunt). For phone testing against a LAN host over HTTP, use the
 `unsafely-treat-insecure-origin-as-secure` flag.
 
 ```
-index.html            app shell (strict CSP, no inline scripts)
-app.css               styles
-js/fmdn.js            pure decode/classify/distance helpers (no DOM)
-js/app.js             UI controller (scan, render, inspect)
-sw.js                 offline service worker
-manifest.webmanifest  PWA manifest
-assets/               icons
+index.html             app shell (strict CSP, no inline scripts)
+app.css                styles
+js/fmdn.js             pure decode / classify / distance / selection helpers (no DOM)
+js/app.js              UI controller (scan, render, inspect)
+sw.js                  offline service worker
+manifest.webmanifest   PWA manifest
+assets/                icons
+test/fmdn.test.js      unit tests (node:test)
+.github/workflows/     CI
 ```
+
+### Testing
+
+The protocol and logic in `js/fmdn.js` (frame decoding, distance, clone/certified
+classification, hunt target selection, history capping) are covered by unit tests using
+**Node's built-in test runner — no dependencies**:
+
+```bash
+node --test          # requires Node >= 18.17 (20+ recommended)
+```
+
+CI runs the suite on Node 20 and 22 for every push and pull request. The UI layer (`js/app.js`)
+delegates its logic to these tested pure functions, so regressions surface in CI.
 
 ## Contributing
 
